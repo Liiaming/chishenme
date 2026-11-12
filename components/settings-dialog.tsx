@@ -25,6 +25,7 @@ export const SettingsDialog = memo(function SettingsDialog({ foods, error, open,
   const [showSaving, setShowSaving] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const openerRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const resetRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -70,7 +71,12 @@ export const SettingsDialog = memo(function SettingsDialog({ foods, error, open,
       </DialogTrigger>
       <DialogContent variant="menu" onOpenAutoFocus={(event) => {
         event.preventDefault();
+        openerRef.current = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
         titleRef.current?.focus();
+      }} onCloseAutoFocus={(event) => {
+        if (!openerRef.current?.isConnected) return;
+        event.preventDefault();
+        openerRef.current.focus();
       }}>
         <DialogHeader>
           <DialogTitle ref={titleRef} tabIndex={-1}>
@@ -91,7 +97,8 @@ export const SettingsDialog = memo(function SettingsDialog({ foods, error, open,
             <div className="reset-actions">
               <Button ref={cancelRef} variant="outline" disabled={saving} onClick={returnToMenu}>保留菜单</Button>
               <Button disabled={saving} onClick={async () => {
-                if (await save(DEFAULT_FOODS)) returnToMenu();
+                const confirmation = cancelRef.current;
+                if (await save(DEFAULT_FOODS) && cancelRef.current === confirmation) returnToMenu();
               }}>确认重置</Button>
             </div>
           </div>

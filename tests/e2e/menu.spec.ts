@@ -530,6 +530,21 @@ test("opening the menu interrupts drawing and closing restores focus without res
   await expect(page.getByRole("button", { name: stopName, exact: true })).toHaveCount(0);
 });
 
+test("closing an empty menu restores focus to its actual opener", async ({ page }) => {
+  await seed(page, "[]");
+  const opener = page.getByRole("button", { name: "添加菜品", exact: true });
+  for (const close of ["escape", "button"]) {
+    await opener.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog", { name: /我的菜单/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /我的菜单/ })).toBeFocused();
+    if (close === "escape") await page.keyboard.press("Escape");
+    else await page.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(opener).toBeFocused();
+  }
+});
+
 test("reset confirmation is cancellable, keeps data and restores focus", async ({ page }) => {
   await seed(page, '["饺子","酸菜鱼"]');
   await openMenu(page);
@@ -638,6 +653,29 @@ test("reset waits for the storage lock before leaving confirmation or replacing 
   await page.evaluate(() => { Reflect.get(window, "releaseResetLock")(); });
   await expect(page.getByText("正在保存…", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: /我的菜单/ })).toBeVisible();
+  expect(await savedFoods(page)).toEqual(DEFAULT_FOODS);
+});
+
+test("a pending reset saves without stealing focus from a reopened menu", async ({ page }) => {
+  await seed(page, '["饺子"]');
+  await openMenu(page);
+  await page.evaluate(() => {
+    void navigator.locks.request("foods", () => new Promise<void>((resolve) => { Reflect.set(window, "releaseResetLock", resolve); }));
+  });
+  await expect.poll(() => page.evaluate(() => typeof Reflect.get(window, "releaseResetLock"))).toBe("function");
+  await resetMenu(page);
+  await expect(page.getByRole("button", { name: "确认重置", exact: true })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await openMenu(page);
+  const input = page.getByRole("textbox", { name: "新增菜品" });
+  await input.focus();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveAttribute("readonly");
+  await page.evaluate(() => { Reflect.get(window, "releaseResetLock")(); });
+  await expect(input).not.toHaveAttribute("readonly");
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(input).toBeFocused();
   expect(await savedFoods(page)).toEqual(DEFAULT_FOODS);
 });
 
