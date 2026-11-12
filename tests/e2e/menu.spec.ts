@@ -9,12 +9,18 @@ async function seed(page: Page, value: string) {
 
 async function openMenu(page: Page) {
   await page.getByRole("button", { name: "打开菜单设置" }).click();
-  await expect(page.getByRole("dialog", { name: "菜单" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: /我的菜单/ })).toBeVisible();
 }
 
 async function addFood(page: Page, food: string) {
   await page.getByRole("textbox", { name: "新增菜品" }).fill(food);
   await page.getByRole("button", { name: "添加菜品", exact: true }).click();
+}
+
+async function resetMenu(page: Page) {
+  await page.getByRole("button", { name: "重置菜单", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "重置菜单？" })).toBeVisible();
+  await page.getByRole("button", { name: "确认重置", exact: true }).click();
 }
 
 async function savedFoods(page: Page) {
@@ -28,6 +34,8 @@ async function contrastRatio(text: Locator) {
     const context = canvas.getContext("2d")!;
     const surface = element.closest('[data-slot="alert"], [role="dialog"]') ?? document.body;
     context.fillStyle = getComputedStyle(surface).backgroundColor;
+    context.fillRect(0, 0, 1, 1);
+    context.fillStyle = getComputedStyle(element).backgroundColor;
     context.fillRect(0, 0, 1, 1);
     const background = context.getImageData(0, 0, 1, 1).data;
     // Let the browser convert modern CSS colours and composite text opacity.
@@ -49,6 +57,16 @@ async function expectNamedButtons(page: Page) {
   }
 }
 
+async function fieldSnapshot(page: Page) {
+  return page.locator(".food-word:not([hidden])").evaluateAll((nodes) => nodes.map((node) => ({
+    text: node.textContent,
+    style: node.getAttribute("style"),
+  })));
+}
+
+const startName = "开始选";
+const stopName = "停，就吃这个";
+
 test.beforeEach(async ({ page }) => {
   page.on("pageerror", (error) => { throw error; });
   page.on("console", (message) => {
@@ -68,8 +86,8 @@ test("default menu draws a visible result, remains clickable and does not poll s
   await expect(page.getByRole("dialog").getByRole("listitem")).toHaveCount(DEFAULT_FOODS.length);
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   const before = await page.evaluate(() => Reflect.get(window, "storageReads") as number);
-  await page.getByRole("button", { name: "开始", exact: true }).click();
-  const stop = page.getByRole("button", { name: "结束", exact: true });
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  const stop = page.getByRole("button", { name: stopName, exact: true });
   await expect(stop).toBeVisible();
   for (let i = 0; i < 5; i++) {
     expect(await stop.evaluate((button) => {
@@ -98,7 +116,7 @@ test("adding trims names, persists across reload and ignores duplicate names", a
   await expect(page.getByRole("textbox")).toHaveCount(1);
 });
 
-test("blank input is rejected, deleting the last item disables drawing, and reset recovers", async ({ page }) => {
+test("blank input is rejected, empty menu offers direct adding, and reset recovers", async ({ page }) => {
   await seed(page, '["饺子"]');
   await openMenu(page);
   await addFood(page, "   ");
@@ -107,11 +125,11 @@ test("blank input is rejected, deleting the last item disables drawing, and rese
   await page.getByRole("button", { name: "删除饺子", exact: true }).click();
   await expect.poll(() => savedFoods(page)).toEqual([]);
   await page.getByRole("button", { name: "关闭", exact: true }).click();
-  await expect(page.getByRole("button", { name: "开始", exact: true })).toBeDisabled();
-  await expect(page.getByText("菜单为空，请先在设置中添加菜品。")).toBeVisible();
-  await openMenu(page);
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "重置菜单", exact: true }).click();
+  await expect(page.getByRole("button", { name: startName, exact: true })).toHaveCount(0);
+  await expect(page.getByText("先加几道喜欢的菜。")).toBeVisible();
+  await page.getByRole("button", { name: "添加菜品", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: /我的菜单/ })).toBeVisible();
+  await resetMenu(page);
   await expect.poll(() => savedFoods(page)).toEqual(DEFAULT_FOODS);
 });
 
@@ -121,8 +139,8 @@ for (const raw of ["{broken", "null", "{}", "[1]"]) {
     await expect(page.getByText(/无法读取本地菜单/)).toBeVisible();
     await openMenu(page);
     await expect(page.getByRole("dialog").getByRole("listitem")).toHaveCount(DEFAULT_FOODS.length);
-    page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: "重置菜单", exact: true }).click();
+    await resetMenu(page);
+    await expect(page.getByRole("dialog", { name: /我的菜单/ })).toBeVisible();
     await expect.poll(() => savedFoods(page)).toEqual(DEFAULT_FOODS);
     await expect(page.getByRole("dialog").getByRole("alert")).toHaveCount(0);
   });
@@ -135,8 +153,8 @@ test("blocked storage leaves the default menu usable and shows a save error", as
   });
   await page.goto("/");
   await expect(page.getByText(/无法读取本地菜单/)).toBeVisible();
-  await page.getByRole("button", { name: "开始", exact: true }).click();
-  await page.getByRole("button", { name: "结束", exact: true }).click();
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  await page.getByRole("button", { name: stopName, exact: true }).click();
   expect(DEFAULT_FOODS).toContain(await page.getByRole("status").innerText());
   await openMenu(page);
   await addFood(page, "测试菜品");
@@ -158,8 +176,9 @@ test("quota failures never publish unsaved data and retain the draft for retry",
   expect(await savedFoods(page)).toEqual(["饺子"]);
   await page.getByRole("button", { name: "删除饺子", exact: true }).click();
   await expect(page.getByRole("dialog").getByRole("listitem")).toHaveCount(1);
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "重置菜单", exact: true }).click();
+  await resetMenu(page);
+  await expect(page.getByRole("dialog").getByText(/菜单保存失败/)).toBeVisible();
+  await page.getByRole("button", { name: "保留菜单", exact: true }).click();
   await expect(page.getByRole("dialog").getByRole("listitem")).toHaveCount(1);
   expect(await savedFoods(page)).toEqual(["饺子"]);
 });
@@ -195,25 +214,26 @@ test("external menu changes stop a running draw and clear a removed result", asy
   await seed(page, '["饺子"]');
   const second = await context.newPage();
   await second.goto("/");
-  await page.getByRole("button", { name: "开始", exact: true }).click();
+  await page.getByRole("button", { name: startName, exact: true }).click();
   await openMenu(second);
   await second.getByRole("button", { name: "删除饺子", exact: true }).click();
-  await expect(page.getByRole("button", { name: "开始", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "添加菜品", exact: true })).toBeVisible();
   await expect(page.getByRole("status")).toBeEmpty();
   await addFood(second, "米饭");
-  await expect(page.getByRole("button", { name: "开始", exact: true })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "结束", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: startName, exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: stopName, exact: true })).toHaveCount(0);
   await second.close();
 });
 
 test("result contrast, button names, long names and reduced motion remain accessible", async ({ page }) => {
   await seed(page, JSON.stringify(["很长的菜名".repeat(40)]));
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.getByRole("button", { name: "开始", exact: true }).click();
-  await expect(page.locator('main > [aria-hidden="true"]')).toBeHidden();
-  await page.getByRole("button", { name: "结束", exact: true }).click();
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  await expect(page.locator(".food-field")).toBeHidden();
+  await page.getByRole("button", { name: stopName, exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  expect(await contrastRatio(page.getByRole("status"))).toBeGreaterThanOrEqual(3);
+  expect(await contrastRatio(page.getByRole("status"))).toBeGreaterThanOrEqual(4.5);
+  await expect(page.getByRole("status")).toHaveAttribute("tabindex", "0");
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await expectNamedButtons(page);
   await openMenu(page);
@@ -229,8 +249,8 @@ test("mixed-length names keep the stop button fixed on a narrow screen", async (
     let i = 0;
     Math.random = () => i++ % 2 ? 0 : 0.999999;
   });
-  await page.getByRole("button", { name: "开始", exact: true }).click();
-  const stop = page.getByRole("button", { name: "结束", exact: true });
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  const stop = page.getByRole("button", { name: stopName, exact: true });
   await expect(stop).toBeVisible();
   const samples = await stop.evaluate(async (button) => {
     const rect = button.getBoundingClientRect();
@@ -292,8 +312,8 @@ test("keyboard submission preserves focus during saving and allows continuous en
 
 test("readding a deleted food does not resurrect the previous result", async ({ page }) => {
   await seed(page, '["饺子"]');
-  await page.getByRole("button", { name: "开始", exact: true }).click();
-  await page.getByRole("button", { name: "结束", exact: true }).click();
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  await page.getByRole("button", { name: stopName, exact: true }).click();
   await expect(page.getByRole("status")).toHaveText("饺子");
   await openMenu(page);
   await page.getByRole("button", { name: "删除饺子", exact: true }).click();
@@ -305,7 +325,7 @@ test("readding a deleted food does not resurrect the previous result", async ({ 
   await expect.poll(() => savedFoods(page)).toEqual(["饺子"]);
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(page.getByRole("status")).toBeEmpty();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("吃什么?");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("吃什么？");
 });
 
 for (const fallback of ["missing", "corrupt"]) {
@@ -313,9 +333,9 @@ for (const fallback of ["missing", "corrupt"]) {
     await page.goto("/");
     const second = await context.newPage();
     await second.goto("/");
-    await page.getByRole("button", { name: "开始", exact: true }).click();
+    await page.getByRole("button", { name: startName, exact: true }).click();
     await second.evaluate(() => localStorage.setItem("foods", '["米饭"]'));
-    await expect(page.getByRole("button", { name: "开始", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: startName, exact: true })).toBeVisible();
     await page.evaluate(() => window.addEventListener("storage", (event) => {
       if (event.key === "foods" && (event.newValue === null || event.newValue === "{broken")) {
         document.body.dataset.fallbackReceived = "true";
@@ -326,21 +346,27 @@ for (const fallback of ["missing", "corrupt"]) {
       else localStorage.setItem("foods", "{broken");
     }, fallback);
     await expect(page.locator("body")).toHaveAttribute("data-fallback-received", "true");
-    await expect(page.getByRole("button", { name: "开始", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: startName, exact: true })).toBeVisible();
     if (fallback === "corrupt") await expect(page.locator("main").getByText(/无法读取本地菜单/)).toBeVisible();
     await openMenu(page);
     await expect(page.getByRole("dialog").getByRole("listitem")).toHaveCount(DEFAULT_FOODS.length);
     await page.getByRole("button", { name: "关闭", exact: true }).click();
-    await expect(page.getByRole("button", { name: "开始", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "结束", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: startName, exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: stopName, exact: true })).toHaveCount(0);
     await second.close();
   });
 }
 
 for (const dark of [false, true]) {
-  test(`${dark ? "dark" : "light"} validation and storage errors have readable contrast`, async ({ page }) => {
+  test(`${dark ? "dark" : "light"} primary hover, validation and storage errors have readable contrast`, async ({ page }) => {
     await seed(page, '["饺子"]');
     await page.evaluate((dark) => document.documentElement.classList.toggle("dark", dark), dark);
+    const primary = page.getByRole("button", { name: startName, exact: true });
+    await primary.hover();
+    await primary.evaluate(async (node) => {
+      await Promise.all(node.getAnimations().map((animation) => animation.finished));
+    });
+    expect(await contrastRatio(primary)).toBeGreaterThanOrEqual(4.5);
     await openMenu(page);
     await addFood(page, "   ");
     const inputError = page.locator('[data-slot="field-error"]');
@@ -364,6 +390,201 @@ test("storage errors do not overlap the selector on a short landscape screen", a
   const alertBox = (await alert.boundingBox())!;
   const selectorBox = (await page.getByRole("region", { name: "吃饭抽签" }).boundingBox())!;
   expect(alertBox.y + alertBox.height).toBeLessThanOrEqual(selectorBox.y);
-  await page.getByRole("button", { name: "开始", exact: true }).click();
-  await page.getByRole("button", { name: "结束", exact: true }).click();
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  await page.getByRole("button", { name: stopName, exact: true }).click();
+});
+
+test("menu field is still at rest, jumps while drawing, stops and rerandomizes on restart", async ({ page }) => {
+  await page.goto("/");
+  const field = page.locator(".food-field");
+  await expect(page.locator(".food-word:not([hidden])").first()).toBeVisible();
+  const idle = await fieldSnapshot(page);
+  await page.waitForTimeout(350);
+  expect(await fieldSnapshot(page)).toEqual(idle);
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  const initial = await fieldSnapshot(page);
+  await expect.poll(() => fieldSnapshot(page)).not.toEqual(initial);
+  const active = await fieldSnapshot(page);
+  expect(active.length).toBeGreaterThan(0);
+  expect(active.length).toBeLessThanOrEqual(page.viewportSize()!.width < 640 ? 9 : 18);
+  expect(await page.locator(".food-word").count()).toBeLessThanOrEqual(18);
+  expect(await page.locator(".food-word:not([hidden]) > span").evaluateAll((nodes) =>
+    nodes.every((node) => node.scrollWidth <= node.clientWidth + 1))).toBe(true);
+  expect(await page.locator(".food-word:not([hidden])").evaluateAll((nodes) => {
+    const center = document.querySelector(".food-selector")!.getBoundingClientRect();
+    return nodes.every((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.right <= center.left || rect.left >= center.right || rect.bottom <= center.top || rect.top >= center.bottom;
+    });
+  })).toBe(true);
+  await page.getByRole("button", { name: stopName, exact: true }).click();
+  await expect(field).toHaveCSS("opacity", "0");
+  const stopped = await fieldSnapshot(page);
+  const result = await page.getByRole("status").innerText();
+  await page.waitForTimeout(400);
+  expect(await fieldSnapshot(page)).toEqual(stopped);
+  await expect(page.getByRole("status")).toHaveText(result);
+  await page.getByRole("button", { name: "再选一次", exact: true }).click();
+  await expect(field).toHaveAttribute("data-state", "running");
+  await expect.poll(() => fieldSnapshot(page)).not.toEqual(stopped);
+});
+
+test("live reduced-motion changes suspend and resume the random field", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  const initial = await fieldSnapshot(page);
+  await expect.poll(() => fieldSnapshot(page)).not.toEqual(initial);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(page.locator(".food-field")).toBeHidden();
+  await expect.poll(() => page.locator(".food-field").evaluate((node) =>
+    node.getAnimations({ subtree: true }).filter((animation) => animation.playState === "running").length)).toBe(0);
+  const reduced = await fieldSnapshot(page);
+  await page.waitForTimeout(400);
+  expect(await fieldSnapshot(page)).toEqual(reduced);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await expect(page.locator(".food-field")).toBeVisible();
+  await expect.poll(() => fieldSnapshot(page)).not.toEqual(reduced);
+  await page.getByRole("button", { name: stopName, exact: true }).click();
+});
+
+test("opening the menu interrupts drawing and closing restores focus without restarting", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  await openMenu(page);
+  await expect(page.locator(".food-field")).toHaveAttribute("data-state", "paused");
+  await expect(page.getByRole("heading", { name: /我的菜单/ })).toBeFocused();
+  const stopped = await fieldSnapshot(page);
+  await page.waitForTimeout(400);
+  expect(await fieldSnapshot(page)).toEqual(stopped);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "打开菜单设置" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "再选一次", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: stopName, exact: true })).toHaveCount(0);
+});
+
+test("reset confirmation is cancellable, keeps data and restores focus", async ({ page }) => {
+  await seed(page, '["饺子","酸菜鱼"]');
+  await openMenu(page);
+  await page.getByRole("button", { name: "重置菜单", exact: true }).click();
+  await expect(page.getByRole("button", { name: "保留菜单", exact: true })).toBeFocused();
+  expect(await savedFoods(page)).toEqual(["饺子", "酸菜鱼"]);
+  await page.getByRole("button", { name: "保留菜单", exact: true }).click();
+  await expect(page.getByRole("button", { name: "重置菜单", exact: true })).toBeFocused();
+  await expect(page.getByRole("dialog").getByRole("listitem")).toHaveCount(2);
+  expect(await savedFoods(page)).toEqual(["饺子", "酸菜鱼"]);
+});
+
+test("menu uses a side panel on desktop and a bottom panel on mobile", async ({ page }) => {
+  await page.goto("/");
+  await openMenu(page);
+  const viewport = page.viewportSize()!;
+  await expect.poll(async () => {
+    const box = (await page.getByRole("dialog").boundingBox())!;
+    return Math.abs(viewport.width < 640 ? box.y + box.height - viewport.height : box.x + box.width - viewport.width);
+  }).toBeLessThan(1);
+  const input = page.getByRole("textbox", { name: "新增菜品" });
+  await expect(input).toBeVisible();
+  expect(await input.evaluate((node) => parseFloat(getComputedStyle(node).fontSize))).toBeGreaterThanOrEqual(16);
+  await page.keyboard.press("Tab");
+  await expect(input).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("button", { name: "关闭", exact: true })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(input).toBeFocused();
+  await expectNamedButtons(page);
+});
+
+test("200 percent text sizing retains the main action and full result without horizontal overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await seed(page, '["重庆招牌酸菜肥牛米线套餐加煎蛋不要香菜"]');
+  await page.evaluate(() => { document.documentElement.style.fontSize = "32px"; });
+  for (const button of await page.getByRole("button").all()) {
+    expect(await button.evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.left >= 0 && rect.right <= window.innerWidth;
+    })).toBe(true);
+  }
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  await page.getByRole("button", { name: stopName, exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("重庆招牌酸菜肥牛米线套餐加煎蛋不要香菜");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect(page.getByRole("button", { name: "再选一次", exact: true })).toBeVisible();
+  await openMenu(page);
+  await expect(page.getByRole("textbox", { name: "新增菜品" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("large menus remain intact while the random field stays bounded", async ({ page }) => {
+  const foods = Array.from({ length: 500 }, (_, i) => `第${i + 1}道家常菜`);
+  await seed(page, JSON.stringify(foods));
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  expect(await page.locator(".food-word").count()).toBeLessThanOrEqual(18);
+  await page.getByRole("button", { name: stopName, exact: true }).click();
+  expect(foods).toContain(await page.getByRole("status").innerText());
+  await openMenu(page);
+  await expect(page.getByRole("dialog").getByRole("listitem")).toHaveCount(500);
+  await page.getByRole("button", { name: "删除第500道家常菜", exact: true }).click();
+  await expect.poll(async () => (await savedFoods(page) as string[]).length).toBe(499);
+  await expect(page.getByRole("button", { name: "删除第1道家常菜", exact: true })).toHaveCount(1);
+});
+
+test("reset waits for the storage lock before leaving confirmation or replacing corrupt data", async ({ page }) => {
+  await seed(page, "{broken");
+  await openMenu(page);
+  await page.evaluate(() => {
+    void navigator.locks.request("foods", () => new Promise<void>((resolve) => { Reflect.set(window, "releaseResetLock", resolve); }));
+  });
+  await expect.poll(() => page.evaluate(() => typeof Reflect.get(window, "releaseResetLock"))).toBe("function");
+  await resetMenu(page);
+  await expect(page.getByRole("button", { name: "确认重置", exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => localStorage.getItem("foods"))).toBe("{broken");
+  await expect(page.getByRole("dialog", { name: "重置菜单？" })).toBeVisible();
+  await page.evaluate(() => { Reflect.get(window, "releaseResetLock")(); });
+  await expect(page.getByRole("dialog", { name: /我的菜单/ })).toBeVisible();
+  expect(await savedFoods(page)).toEqual(DEFAULT_FOODS);
+});
+
+test("visibility changes pause drawing work and cannot revive a stopped draw", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  const paused = await fieldSnapshot(page);
+  const candidate = await page.getByRole("status").innerText();
+  await page.waitForTimeout(400);
+  expect(await fieldSnapshot(page)).toEqual(paused);
+  await expect(page.getByRole("status")).toHaveText(candidate);
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect.poll(() => fieldSnapshot(page)).not.toEqual(paused);
+  await page.getByRole("button", { name: stopName, exact: true }).click();
+  const stopped = await fieldSnapshot(page);
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await page.waitForTimeout(350);
+  expect(await fieldSnapshot(page)).toEqual(stopped);
+  await expect(page.getByRole("button", { name: stopName, exact: true })).toHaveCount(0);
+});
+
+test("rapid keyboard stop and restart leaves no old background or selection timers", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  await page.getByRole("button", { name: stopName, exact: true }).focus();
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: "再选一次", exact: true })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: stopName, exact: true })).toBeFocused();
+  }
+  await page.keyboard.press("Enter");
+  const stopped = await fieldSnapshot(page);
+  const result = await page.getByRole("status").innerText();
+  await page.waitForTimeout(450);
+  expect(await fieldSnapshot(page)).toEqual(stopped);
+  await expect(page.getByRole("status")).toHaveText(result);
+  await expect(page.locator(".food-field")).toHaveCSS("opacity", "0");
 });

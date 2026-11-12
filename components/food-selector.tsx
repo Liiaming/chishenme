@@ -1,26 +1,36 @@
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
-export function FoodSelector({ food, running, empty, onToggle }: {
+export function FoodSelector({ food, running, empty, onToggle, onAdd }: {
   food: string;
   running: boolean;
   empty: boolean;
   onToggle: () => void;
+  onAdd: () => void;
 }) {
   return (
-    <section className="relative flex w-full max-w-lg flex-col items-center gap-4 text-center" aria-label="吃饭抽签">
-      <h1 className="text-5xl">{running || !food ? "吃什么?" : "吃这个!"}</h1>
-      <p
-        className={cn("min-h-10 w-full text-3xl font-bold text-foreground", running ? "h-10 truncate" : "wrap-anywhere")}
-        role="status"
-        aria-live={running ? "off" : "polite"}
-        aria-atomic="true"
-      >
-        {food}
-      </p>
-      {empty && <p className="text-sm text-muted-foreground">菜单为空，请先在设置中添加菜品。</p>}
-      <Button size="lg" disabled={empty} onClick={onToggle}>
-        {running ? "结束" : "开始"}
+    <section className="food-selector" aria-label="吃饭抽签">
+      <p className="selection-label">{running ? "正在选" : food ? "选好了" : ""}</p>
+      <div className="selection-stage" data-settled={!!food && !running}>
+        {!food && (
+          <p className="selection-question">
+            {empty ? <>菜单<br />还是空的</> : <>今天<br />吃什么？</>}
+          </p>
+        )}
+        <p
+          className="selection-result"
+          data-running={running}
+          role="status"
+          aria-label={food && !running ? "选中的菜品" : undefined}
+          aria-live={running ? "off" : "polite"}
+          aria-atomic="true"
+          tabIndex={food && !running ? 0 : undefined}
+        >
+          {food}
+        </p>
+      </div>
+      <p className="selection-hint">{empty ? "先加几道喜欢的菜。" : ""}</p>
+      <Button size="draw" onClick={empty ? onAdd : onToggle}>
+        {empty ? "添加菜品" : running ? "停，就吃这个" : food ? "再选一次" : "开始选"}
       </Button>
     </section>
   );

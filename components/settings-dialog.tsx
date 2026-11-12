@@ -1,27 +1,32 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { Plus, Settings, X } from "lucide-react";
+import { memo, useRef, useState } from "react";
+import { List, Plus, X } from "lucide-react";
 import { DEFAULT_FOODS } from "@/lib/foods";
 import { updateFoods } from "@/lib/food-store";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-export function SettingsDialog({ foods, error, onOpen }: {
+export const SettingsDialog = memo(function SettingsDialog({ foods, error, open, onOpenChange }: {
   foods: readonly string[];
   error: string;
-  onOpen: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const [newFood, setNewFood] = useState("");
   const [inputError, setInputError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const resetRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
   async function save(update: Parameters<typeof updateFoods>[0]) {
     setSaving(true);
@@ -30,74 +35,105 @@ export function SettingsDialog({ foods, error, onOpen }: {
     return saved;
   }
 
+  function returnToMenu() {
+    setConfirmReset(false);
+    requestAnimationFrame(() => resetRef.current?.focus());
+  }
+
   return (
-    <Dialog onOpenChange={(open) => { if (open) onOpen(); }}>
+    <Dialog open={open} onOpenChange={(next) => {
+      if (!next) setConfirmReset(false);
+      onOpenChange(next);
+    }}>
       <DialogTrigger asChild>
-        <Button size="icon-lg" variant="outline" className="fixed right-4 bottom-4" aria-label="打开菜单设置">
-          <Settings aria-hidden="true" />
+        <Button variant="ghost" className="ml-auto" aria-label="打开菜单设置">
+          <List data-icon="inline-start" aria-hidden="true" />菜单
+          <span className="menu-count" aria-hidden="true">{foods.length}</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-sm">
+      <DialogContent variant="menu" onOpenAutoFocus={(event) => {
+        event.preventDefault();
+        titleRef.current?.focus();
+      }}>
         <DialogHeader>
-          <DialogTitle>菜单</DialogTitle>
-          <DialogDescription>菜单仅保存在当前浏览器，可添加、删除或重置菜品。</DialogDescription>
+          <DialogTitle ref={titleRef} tabIndex={-1}>
+            {confirmReset ? "重置菜单？" : <>我的菜单<span className="menu-count">{foods.length} 道</span></>}
+          </DialogTitle>
+          <DialogDescription>
+            {confirmReset ? "重置将替换当前菜单，此操作不能撤销。" : "只保存在当前浏览器。"}
+          </DialogDescription>
         </DialogHeader>
         {error && (
           <Alert variant="destructive" aria-live="polite">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
-        <ScrollArea className="h-[min(40svh,24rem)] rounded-lg border" aria-label="当前菜品">
-          <ul className="flex flex-col gap-2 p-3">
-            {foods.map((food) => (
-              <li key={food} className="flex min-w-0 items-center justify-between gap-2">
-                <span className="min-w-0 wrap-anywhere">{food}</span>
-                <Button
-                  size="icon" variant="ghost" disabled={saving} aria-label={`删除${food}`}
-                  onClick={() => void save((current) => current.filter((item) => item !== food))}
-                >
-                  <X aria-hidden="true" />
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </ScrollArea>
-        <form onSubmit={async (event) => {
-          event.preventDefault();
-          if (saving) return;
-          const name = newFood.trim();
-          if (!name) {
-            setInputError("请输入菜名，不能只填写空格。");
-            inputRef.current?.focus();
-            return;
-          }
-          if (await save((current) => [...current, name])) {
-            setNewFood("");
-            setInputError("");
-          }
-        }}>
-          <FieldGroup>
-            <Field data-invalid={!!inputError}>
-              <FieldLabel htmlFor="new-food">新增菜品</FieldLabel>
-              <Input
-                ref={inputRef} id="new-food" name="food" autoComplete="off" placeholder="例如：饺子…"
-                value={newFood} readOnly={saving} aria-invalid={!!inputError}
-                aria-describedby={inputError ? "food-input-error" : undefined}
-                onChange={(event) => { setNewFood(event.target.value); setInputError(""); }}
-              />
-              {inputError && <FieldError id="food-input-error">{inputError}</FieldError>}
-            </Field>
-          </FieldGroup>
-          <Button type="submit" className="mt-3 w-full" disabled={saving}>
-            <Plus data-icon="inline-start" aria-hidden="true" />添加菜品
-          </Button>
-        </form>
-        <DialogFooter>
-          <Button variant="outline" disabled={saving} onClick={() => {
-            if (window.confirm("重置将替换当前菜单，是否继续？")) void save(DEFAULT_FOODS);
-          }}>重置菜单</Button>
-        </DialogFooter>
+        {confirmReset ? (
+          <div className="reset-confirmation">
+            <p>用默认的 {DEFAULT_FOODS.length} 道菜替换当前菜单？自己添加的菜品也会被移除。</p>
+            <div className="reset-actions">
+              <Button ref={cancelRef} variant="outline" disabled={saving} onClick={returnToMenu}>保留菜单</Button>
+              <Button disabled={saving} onClick={async () => {
+                if (await save(DEFAULT_FOODS)) returnToMenu();
+              }}>确认重置</Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <form onSubmit={async (event) => {
+              event.preventDefault();
+              if (saving) return;
+              const name = newFood.trim();
+              if (!name) {
+                setInputError("请输入菜名，不能只填写空格。");
+                inputRef.current?.focus();
+                return;
+              }
+              if (await save((current) => [...current, name])) {
+                setNewFood("");
+                setInputError("");
+              }
+            }}>
+              <FieldGroup>
+                <Field data-invalid={!!inputError}>
+                  <FieldLabel htmlFor="new-food">新增菜品</FieldLabel>
+                  <div className="new-food-row">
+                    <Input
+                      ref={inputRef} id="new-food" name="food" autoComplete="off" placeholder="例如：酸菜鱼…"
+                      value={newFood} readOnly={saving} aria-invalid={!!inputError}
+                      aria-describedby={inputError ? "food-input-error" : undefined}
+                      onChange={(event) => { setNewFood(event.target.value); setInputError(""); }}
+                    />
+                    <Button type="submit" disabled={saving} aria-label="添加菜品">
+                      <Plus data-icon="inline-start" aria-hidden="true" />添加
+                    </Button>
+                  </div>
+                  {inputError && <FieldError id="food-input-error">{inputError}</FieldError>}
+                </Field>
+              </FieldGroup>
+            </form>
+            <ScrollArea className="menu-list" aria-label="当前菜品">
+              <ul className="menu-foods">
+                {foods.map((food) => (
+                  <li key={food}>
+                    <span>{food}</span>
+                    <Button
+                      size="icon" variant="ghost" disabled={saving} aria-label={`删除${food}`}
+                      onClick={() => void save((current) => current.filter((item) => item !== food))}
+                    >
+                      <X aria-hidden="true" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </ScrollArea>
+            <Button ref={resetRef} variant="ghost" className="menu-reset" disabled={saving} onClick={() => {
+              setConfirmReset(true);
+              requestAnimationFrame(() => cancelRef.current?.focus());
+            }}>重置菜单</Button>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
-}
+});
