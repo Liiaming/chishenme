@@ -8,7 +8,7 @@ async function seed(page: Page, value: string) {
 }
 
 async function openMenu(page: Page) {
-  await page.getByRole("button", { name: "打开菜单设置" }).click();
+  await page.getByRole("button", { name: "编辑菜单" }).click();
   await expect(page.getByRole("dialog", { name: /我的菜单/ })).toBeVisible();
 }
 
@@ -57,10 +57,9 @@ async function expectNamedButtons(page: Page) {
   }
 }
 
-async function fieldSnapshot(page: Page) {
-  return page.locator(".food-word:not([hidden])").evaluateAll((nodes) => nodes.map((node) => ({
-    text: node.textContent,
-    style: node.getAttribute("style"),
+async function posterSnapshot(page: Page) {
+  return page.locator(".menu-poster .paper-foods > li").evaluateAll((nodes) => nodes.map((node) => ({
+    text: node.firstElementChild?.textContent,
   })));
 }
 
@@ -229,7 +228,7 @@ test("result contrast, button names, long names and reduced motion remain access
   await seed(page, JSON.stringify(["很长的菜名".repeat(40)]));
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.getByRole("button", { name: startName, exact: true }).click();
-  await expect(page.locator(".food-field")).toBeHidden();
+  await expect(page.getByRole("region", { name: "我的菜单", exact: true })).toBeVisible();
   await page.getByRole("button", { name: stopName, exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(await contrastRatio(page.getByRole("status"))).toBeGreaterThanOrEqual(4.5);
@@ -291,7 +290,9 @@ test("keyboard submission preserves focus during saving and allows continuous en
   await expect(input).toBeFocused();
   await expect(page.getByRole("button", { name: "添加菜品", exact: true })).toBeDisabled();
   await page.keyboard.press("Enter");
+  await expect(page.getByText("正在保存…", { exact: true })).toBeVisible();
   await page.evaluate(() => { Reflect.get(window, "releaseFoodLock")(); });
+  await expect(page.getByText("正在保存…", { exact: true })).toHaveCount(0);
   await expect(input).toHaveValue("");
   await expect(input).toBeFocused();
   await page.keyboard.type("米饭");
@@ -310,6 +311,53 @@ test("keyboard submission preserves focus during saving and allows continuous en
   await expect(input).not.toHaveAttribute("readonly");
 });
 
+test("keyboard deletion focuses the next food, previous food or empty-menu input", async ({ page }) => {
+  await seed(page, '["饺子","拉面","米饭"]');
+  await openMenu(page);
+  await page.getByRole("button", { name: "删除拉面", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "删除拉面", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "删除米饭", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "删除米饭", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "删除饺子", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog").getByRole("listitem")).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "新增菜品" })).toBeFocused();
+});
+
+test("failed keyboard deletion keeps the food and restores its button focus", async ({ page }) => {
+  await seed(page, '["饺子","拉面"]');
+  await openMenu(page);
+  await page.evaluate(() => {
+    Storage.prototype.setItem = () => { throw new DOMException("Full", "QuotaExceededError"); };
+  });
+  const remove = page.getByRole("button", { name: "删除拉面", exact: true });
+  await remove.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog").getByText(/菜单保存失败/)).toBeVisible();
+  await expect(remove).toBeFocused();
+  expect(await savedFoods(page)).toEqual(["饺子", "拉面"]);
+});
+
+test("closing the menu during deletion preserves focus on its trigger", async ({ page }) => {
+  await seed(page, '["饺子","拉面"]');
+  await openMenu(page);
+  await page.evaluate(() => {
+    void navigator.locks.request("foods", () => new Promise<void>((resolve) => { Reflect.set(window, "releaseDeleteLock", resolve); }));
+  });
+  await expect.poll(() => page.evaluate(() => typeof Reflect.get(window, "releaseDeleteLock"))).toBe("function");
+  const remove = page.getByRole("button", { name: "删除拉面", exact: true });
+  await remove.focus();
+  await page.keyboard.press("Enter");
+  await expect(remove).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.evaluate(() => { Reflect.get(window, "releaseDeleteLock")(); });
+  await expect.poll(() => savedFoods(page)).toEqual(["饺子"]);
+  await expect(page.getByRole("button", { name: "编辑菜单" })).toBeFocused();
+});
+
 test("readding a deleted food does not resurrect the previous result", async ({ page }) => {
   await seed(page, '["饺子"]');
   await page.getByRole("button", { name: startName, exact: true }).click();
@@ -325,7 +373,7 @@ test("readding a deleted food does not resurrect the previous result", async ({ 
   await expect.poll(() => savedFoods(page)).toEqual(["饺子"]);
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(page.getByRole("status")).toBeEmpty();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("吃什么？");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("吃什么");
 });
 
 for (const fallback of ["missing", "corrupt"]) {
@@ -394,71 +442,90 @@ test("storage errors do not overlap the selector on a short landscape screen", a
   await page.getByRole("button", { name: stopName, exact: true }).click();
 });
 
-test("menu field is still at rest, jumps while drawing, stops and rerandomizes on restart", async ({ page }) => {
+test("menu stays unchanged through starting, stopping and restarting the full draw pool", async ({ page }) => {
   await page.goto("/");
-  const field = page.locator(".food-field");
-  await expect(page.locator(".food-word:not([hidden])").first()).toBeVisible();
-  const idle = await fieldSnapshot(page);
+  const rows = page.locator(".menu-poster .paper-foods > li");
+  await expect(rows).toHaveCount(6);
+  const idle = await posterSnapshot(page);
+  expect(new Set(idle.map((row) => row.text)).size).toBe(6);
+  for (const row of idle) expect(DEFAULT_FOODS).toContain(row.text);
   await page.waitForTimeout(350);
-  expect(await fieldSnapshot(page)).toEqual(idle);
+  expect(await posterSnapshot(page)).toEqual(idle);
+  // Deliberately choose a dish outside the visible preview.
+  const index = DEFAULT_FOODS.findIndex((food) => !idle.some((row) => row.text === food));
+  await page.evaluate((value) => { Math.random = () => value; }, (index + 0.5) / DEFAULT_FOODS.length);
   await page.getByRole("button", { name: startName, exact: true }).click();
-  const initial = await fieldSnapshot(page);
-  await expect.poll(() => fieldSnapshot(page)).not.toEqual(initial);
-  const active = await fieldSnapshot(page);
-  expect(active.length).toBeGreaterThan(0);
-  expect(active.length).toBeLessThanOrEqual(page.viewportSize()!.width < 640 ? 9 : 18);
-  expect(await page.locator(".food-word").count()).toBeLessThanOrEqual(18);
-  expect(await page.locator(".food-word:not([hidden]) > span").evaluateAll((nodes) =>
-    nodes.every((node) => node.scrollWidth <= node.clientWidth + 1))).toBe(true);
-  expect(await page.locator(".food-word:not([hidden])").evaluateAll((nodes) => {
-    const center = document.querySelector(".food-selector")!.getBoundingClientRect();
-    return nodes.every((node) => {
-      const rect = node.getBoundingClientRect();
-      return rect.right <= center.left || rect.left >= center.right || rect.bottom <= center.top || rect.top >= center.bottom;
-    });
-  })).toBe(true);
+  await expect(page.getByRole("status")).toHaveText(DEFAULT_FOODS[index]);
+  await page.waitForTimeout(350);
+  expect(await posterSnapshot(page)).toEqual(idle);
+  await expect(page.locator("main header, main footer")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "我的菜单", exact: true }).getByRole("button", { name: "编辑菜单" })).toBeVisible();
   await page.getByRole("button", { name: stopName, exact: true }).click();
-  await expect(field).toHaveCSS("opacity", "0");
-  const stopped = await fieldSnapshot(page);
-  const result = await page.getByRole("status").innerText();
+  expect(await posterSnapshot(page)).toEqual(idle);
+  const stopped = await posterSnapshot(page);
   await page.waitForTimeout(400);
-  expect(await fieldSnapshot(page)).toEqual(stopped);
-  await expect(page.getByRole("status")).toHaveText(result);
+  expect(await posterSnapshot(page)).toEqual(stopped);
+  await expect(page.getByRole("status")).toHaveText(DEFAULT_FOODS[index]);
+  await page.evaluate(() => { Math.random = () => 0; });
   await page.getByRole("button", { name: "再选一次", exact: true }).click();
-  await expect(field).toHaveAttribute("data-state", "running");
-  await expect.poll(() => fieldSnapshot(page)).not.toEqual(stopped);
+  await expect(page.getByRole("status")).toHaveText(DEFAULT_FOODS[0]);
+  expect(await posterSnapshot(page)).toEqual(idle);
+  await page.getByRole("button", { name: stopName, exact: true }).click();
+  expect(await posterSnapshot(page)).toEqual(idle);
+  expect(new Set((await posterSnapshot(page)).map((row) => row.text)).size).toBe(6);
 });
 
-test("live reduced-motion changes suspend and resume the random field", async ({ page }) => {
-  await page.goto("/");
+test("reduced motion changes the candidate cadence live without changing the draw", async ({ page }) => {
+  await seed(page, '["饺子","拉面"]');
+  await page.evaluate(() => {
+    let i = 0;
+    Math.random = () => i++ % 2 ? 0 : 0.999999;
+  });
   await page.getByRole("button", { name: startName, exact: true }).click();
-  const initial = await fieldSnapshot(page);
-  await expect.poll(() => fieldSnapshot(page)).not.toEqual(initial);
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect(page.locator(".food-field")).toBeHidden();
-  await expect.poll(() => page.locator(".food-field").evaluate((node) =>
-    node.getAnimations({ subtree: true }).filter((animation) => animation.playState === "running").length)).toBe(0);
-  const reduced = await fieldSnapshot(page);
-  await page.waitForTimeout(400);
-  expect(await fieldSnapshot(page)).toEqual(reduced);
+  // MediaQueryList change events follow real rendering, not Playwright's mocked clock.
+  const sampleChanges = (duration: number) => page.getByRole("status").evaluate(async (node, duration) => {
+    const changes: number[] = [];
+    const observer = new MutationObserver(() => changes.push(performance.now()));
+    observer.observe(node, { childList: true, subtree: true, characterData: true });
+    await new Promise((resolve) => setTimeout(resolve, duration));
+    observer.disconnect();
+    return changes;
+  }, duration);
+  const reduced = await sampleChanges(1150);
+  expect(reduced.length).toBeGreaterThanOrEqual(2);
+  expect(reduced.length).toBeLessThanOrEqual(3);
+  for (let i = 1; i < reduced.length; i++) expect(reduced[i] - reduced[i - 1]).toBeGreaterThan(350);
+  expect(await page.locator(".menu-poster").evaluate((node) => node.getAnimations({ subtree: true }).length)).toBe(0);
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await expect(page.locator(".food-field")).toBeVisible();
-  await expect.poll(() => fieldSnapshot(page)).not.toEqual(reduced);
+  expect((await sampleChanges(450)).length).toBeGreaterThanOrEqual(3);
   await page.getByRole("button", { name: stopName, exact: true }).click();
+});
+
+test("one dish and an empty menu do not invent preview entries", async ({ page }) => {
+  await seed(page, '["饺子"]');
+  await expect(page.locator(".menu-poster .paper-foods > li")).toHaveCount(1);
+  await page.getByRole("button", { name: startName, exact: true }).click();
+  await page.getByRole("button", { name: stopName, exact: true }).click();
+  await expect(page.locator(".menu-poster .paper-foods > li > span")).toHaveText("饺子");
+  await openMenu(page);
+  await page.getByRole("button", { name: "删除饺子", exact: true }).click();
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(page.locator(".menu-poster .paper-foods > li")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "添加菜品", exact: true })).toBeVisible();
 });
 
 test("opening the menu interrupts drawing and closing restores focus without restarting", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: startName, exact: true }).click();
   await openMenu(page);
-  await expect(page.locator(".food-field")).toHaveAttribute("data-state", "paused");
   await expect(page.getByRole("heading", { name: /我的菜单/ })).toBeFocused();
-  const stopped = await fieldSnapshot(page);
+  const stopped = await posterSnapshot(page);
   await page.waitForTimeout(400);
-  expect(await fieldSnapshot(page)).toEqual(stopped);
+  expect(await posterSnapshot(page)).toEqual(stopped);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "打开菜单设置" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "编辑菜单" })).toBeFocused();
   await expect(page.getByRole("button", { name: "再选一次", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: stopName, exact: true })).toHaveCount(0);
 });
@@ -475,14 +542,18 @@ test("reset confirmation is cancellable, keeps data and restores focus", async (
   expect(await savedFoods(page)).toEqual(["饺子", "酸菜鱼"]);
 });
 
-test("menu uses a side panel on desktop and a bottom panel on mobile", async ({ page }) => {
+test("menu opens as a centered paper with keyboard focus contained", async ({ page }) => {
   await page.goto("/");
   await openMenu(page);
   const viewport = page.viewportSize()!;
   await expect.poll(async () => {
     const box = (await page.getByRole("dialog").boundingBox())!;
-    return Math.abs(viewport.width < 640 ? box.y + box.height - viewport.height : box.x + box.width - viewport.width);
+    return Math.max(Math.abs(box.x + box.width / 2 - viewport.width / 2), Math.abs(box.y + box.height / 2 - viewport.height / 2));
   }).toBeLessThan(1);
+  const dialogBox = (await page.getByRole("dialog").boundingBox())!;
+  expect(dialogBox.x).toBeGreaterThan(0);
+  expect(dialogBox.y).toBeGreaterThan(0);
+  expect(dialogBox.y + dialogBox.height).toBeLessThan(viewport.height);
   const input = page.getByRole("textbox", { name: "新增菜品" });
   await expect(input).toBeVisible();
   expect(await input.evaluate((node) => parseFloat(getComputedStyle(node).fontSize))).toBeGreaterThanOrEqual(16);
@@ -493,6 +564,29 @@ test("menu uses a side panel on desktop and a bottom panel on mobile", async ({ 
   await page.keyboard.press("Tab");
   await expect(input).toBeFocused();
   await expectNamedButtons(page);
+});
+
+test("desktop composition fits one screen without hiding content or repeating counts", async ({ page }) => {
+  for (const viewport of [
+    { width: 1440, height: 900 }, { width: 1366, height: 768 },
+    { width: 1280, height: 720 }, { width: 1024, height: 768 }, { width: 1024, height: 600 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/");
+    expect(await page.evaluate(() => ({
+      horizontal: document.documentElement.scrollWidth > innerWidth,
+      vertical: document.documentElement.scrollHeight > innerHeight,
+    }))).toEqual({ horizontal: false, vertical: false });
+    for (const selector of [".menu-stack", ".food-selector"]) {
+      const box = (await page.locator(selector).boundingBox())!;
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+    }
+    await expect(page.getByText(/展示.*道|道菜，随你选/)).toHaveCount(0);
+    await page.getByRole("button", { name: startName, exact: true }).click();
+    await page.getByRole("button", { name: stopName, exact: true }).click();
+    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(viewport.height);
+  }
 });
 
 test("200 percent text sizing retains the main action and full result without horizontal overflow", async ({ page }) => {
@@ -515,11 +609,11 @@ test("200 percent text sizing retains the main action and full result without ho
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
-test("large menus remain intact while the random field stays bounded", async ({ page }) => {
+test("large menus remain intact while the menu preview stays bounded", async ({ page }) => {
   const foods = Array.from({ length: 500 }, (_, i) => `第${i + 1}道家常菜`);
   await seed(page, JSON.stringify(foods));
   await page.getByRole("button", { name: startName, exact: true }).click();
-  expect(await page.locator(".food-word").count()).toBeLessThanOrEqual(18);
+  await expect(page.locator(".menu-poster .paper-foods > li")).toHaveCount(6);
   await page.getByRole("button", { name: stopName, exact: true }).click();
   expect(foods).toContain(await page.getByRole("status").innerText());
   await openMenu(page);
@@ -540,7 +634,9 @@ test("reset waits for the storage lock before leaving confirmation or replacing 
   await expect(page.getByRole("button", { name: "确认重置", exact: true })).toBeDisabled();
   expect(await page.evaluate(() => localStorage.getItem("foods"))).toBe("{broken");
   await expect(page.getByRole("dialog", { name: "重置菜单？" })).toBeVisible();
+  await expect(page.getByText("正在保存…", { exact: true })).toBeVisible();
   await page.evaluate(() => { Reflect.get(window, "releaseResetLock")(); });
+  await expect(page.getByText("正在保存…", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: /我的菜单/ })).toBeVisible();
   expect(await savedFoods(page)).toEqual(DEFAULT_FOODS);
 });
@@ -552,25 +648,26 @@ test("visibility changes pause drawing work and cannot revive a stopped draw", a
     Object.defineProperty(document, "hidden", { configurable: true, value: true });
     document.dispatchEvent(new Event("visibilitychange"));
   });
-  const paused = await fieldSnapshot(page);
+  const paused = await posterSnapshot(page);
   const candidate = await page.getByRole("status").innerText();
   await page.waitForTimeout(400);
-  expect(await fieldSnapshot(page)).toEqual(paused);
+  expect(await posterSnapshot(page)).toEqual(paused);
   await expect(page.getByRole("status")).toHaveText(candidate);
   await page.evaluate(() => {
     Object.defineProperty(document, "hidden", { configurable: true, value: false });
     document.dispatchEvent(new Event("visibilitychange"));
   });
-  await expect.poll(() => fieldSnapshot(page)).not.toEqual(paused);
+  await expect.poll(() => page.getByRole("status").innerText()).not.toBe(candidate);
+  expect(await posterSnapshot(page)).toEqual(paused);
   await page.getByRole("button", { name: stopName, exact: true }).click();
-  const stopped = await fieldSnapshot(page);
+  const stopped = await posterSnapshot(page);
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await page.waitForTimeout(350);
-  expect(await fieldSnapshot(page)).toEqual(stopped);
+  expect(await posterSnapshot(page)).toEqual(stopped);
   await expect(page.getByRole("button", { name: stopName, exact: true })).toHaveCount(0);
 });
 
-test("rapid keyboard stop and restart leaves no old background or selection timers", async ({ page }) => {
+test("rapid keyboard stop and restart leaves no old selection timers", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: startName, exact: true }).click();
   await page.getByRole("button", { name: stopName, exact: true }).focus();
@@ -581,10 +678,10 @@ test("rapid keyboard stop and restart leaves no old background or selection time
     await expect(page.getByRole("button", { name: stopName, exact: true })).toBeFocused();
   }
   await page.keyboard.press("Enter");
-  const stopped = await fieldSnapshot(page);
+  const stopped = await posterSnapshot(page);
   const result = await page.getByRole("status").innerText();
   await page.waitForTimeout(450);
-  expect(await fieldSnapshot(page)).toEqual(stopped);
+  expect(await posterSnapshot(page)).toEqual(stopped);
   await expect(page.getByRole("status")).toHaveText(result);
-  await expect(page.locator(".food-field")).toHaveCSS("opacity", "0");
+
 });

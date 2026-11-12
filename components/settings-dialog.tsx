@@ -1,7 +1,7 @@
 "use client";
 
-import { memo, useRef, useState } from "react";
-import { List, Plus, X } from "lucide-react";
+import { memo, useEffect, useRef, useState } from "react";
+import { Plus, X } from "lucide-react";
 import { DEFAULT_FOODS } from "@/lib/foods";
 import { updateFoods } from "@/lib/food-store";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -22,16 +22,25 @@ export const SettingsDialog = memo(function SettingsDialog({ foods, error, open,
   const [newFood, setNewFood] = useState("");
   const [inputError, setInputError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [showSaving, setShowSaving] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const resetRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const foodListRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    if (!saving) return;
+    const timer = setTimeout(() => setShowSaving(true), 300);
+    return () => clearTimeout(timer);
+  }, [saving]);
 
   async function save(update: Parameters<typeof updateFoods>[0]) {
     setSaving(true);
     const saved = await updateFoods(update);
     setSaving(false);
+    setShowSaving(false);
     return saved;
   }
 
@@ -40,16 +49,24 @@ export const SettingsDialog = memo(function SettingsDialog({ foods, error, open,
     requestAnimationFrame(() => resetRef.current?.focus());
   }
 
+  async function deleteFood(food: string, index: number) {
+    const list = foodListRef.current;
+    if (!list) return;
+    await save((current) => current.filter((item) => item !== food));
+    requestAnimationFrame(() => {
+      if (foodListRef.current !== list) return;
+      const buttons = list.querySelectorAll<HTMLButtonElement>("button");
+      (buttons[Math.min(index, buttons.length - 1)] ?? inputRef.current)?.focus();
+    });
+  }
+
   return (
     <Dialog open={open} onOpenChange={(next) => {
       if (!next) setConfirmReset(false);
       onOpenChange(next);
     }}>
       <DialogTrigger asChild>
-        <Button variant="ghost" className="ml-auto" aria-label="打开菜单设置">
-          <List data-icon="inline-start" aria-hidden="true" />菜单
-          <span className="menu-count" aria-hidden="true">{foods.length}</span>
-        </Button>
+        <Button variant="outline" aria-label="编辑菜单">编辑</Button>
       </DialogTrigger>
       <DialogContent variant="menu" onOpenAutoFocus={(event) => {
         event.preventDefault();
@@ -60,7 +77,7 @@ export const SettingsDialog = memo(function SettingsDialog({ foods, error, open,
             {confirmReset ? "重置菜单？" : <>我的菜单<span className="menu-count">{foods.length} 道</span></>}
           </DialogTitle>
           <DialogDescription>
-            {confirmReset ? "重置将替换当前菜单，此操作不能撤销。" : "只保存在当前浏览器。"}
+            {confirmReset ? "重置将替换当前菜单，此操作不能撤销。" : "改动自动保存到当前浏览器。"}
           </DialogDescription>
         </DialogHeader>
         {error && (
@@ -113,13 +130,14 @@ export const SettingsDialog = memo(function SettingsDialog({ foods, error, open,
               </FieldGroup>
             </form>
             <ScrollArea className="menu-list" aria-label="当前菜品">
-              <ul className="menu-foods">
-                {foods.map((food) => (
+              {!foods.length && <p className="menu-empty">还没有菜品，在上面添加一道吧。</p>}
+              <ul ref={foodListRef} className="menu-foods">
+                {foods.map((food, index) => (
                   <li key={food}>
                     <span>{food}</span>
                     <Button
                       size="icon" variant="ghost" disabled={saving} aria-label={`删除${food}`}
-                      onClick={() => void save((current) => current.filter((item) => item !== food))}
+                      onClick={() => void deleteFood(food, index)}
                     >
                       <X aria-hidden="true" />
                     </Button>
@@ -127,12 +145,15 @@ export const SettingsDialog = memo(function SettingsDialog({ foods, error, open,
                 ))}
               </ul>
             </ScrollArea>
-            <Button ref={resetRef} variant="ghost" className="menu-reset" disabled={saving} onClick={() => {
-              setConfirmReset(true);
-              requestAnimationFrame(() => cancelRef.current?.focus());
-            }}>重置菜单</Button>
           </>
         )}
+        <div className="menu-bottom">
+          {!confirmReset && <Button ref={resetRef} variant="ghost" className="menu-reset" disabled={saving} onClick={() => {
+            setConfirmReset(true);
+            requestAnimationFrame(() => cancelRef.current?.focus());
+          }}>重置菜单</Button>}
+          <p className="save-status" aria-live="polite">{showSaving ? "正在保存…" : ""}</p>
+        </div>
       </DialogContent>
     </Dialog>
   );

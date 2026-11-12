@@ -5,7 +5,7 @@ import { random } from "@/lib/foods";
 import { getFoodsSnapshot, getInitialFoodsSnapshot, subscribeFoods } from "@/lib/food-store";
 import { FoodSelector } from "@/components/food-selector";
 import { SettingsDialog } from "@/components/settings-dialog";
-import { RandomizedBackground } from "@/components/randomized-background";
+import { MenuPoster } from "@/components/menu-poster";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export default function Home() {
@@ -52,18 +52,17 @@ export default function Home() {
 
   return (
     <main className="app-shell">
-      <header className="app-header">
-        <h1 className="wordmark">吃什么<span aria-hidden="true">？</span></h1>
-        <SettingsDialog foods={foods} error={error} open={menuOpen} onOpenChange={changeMenu} />
-      </header>
+      <h1 className="sr-only">吃什么</h1>
       {error && (
         <Alert variant="destructive" className="storage-notice" aria-live="polite">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
       <div className="drawing-stage">
-        <RandomizedBackground foods={foods} running={running} settled={!!food && !running} paused={menuOpen} />
         <FoodSelector food={food} running={running} empty={!foods.length} onToggle={toggleSelection} onAdd={() => changeMenu(true)} />
+        <MenuPoster foods={foods}>
+          <SettingsDialog foods={foods} error={error} open={menuOpen} onOpenChange={changeMenu} />
+        </MenuPoster>
       </div>
     </main>
   );
