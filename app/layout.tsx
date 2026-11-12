@@ -6,7 +6,7 @@ import "./globals.css";
 
 const fontSans = FontSans({
   subsets: ["latin"],
-  variable: "--font-sans",
+  variable: "--font-inter",
 });
 
 export const metadata: Metadata = {
@@ -20,7 +20,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="zh-CN">
       <body className={cn("min-h-screen bg-background font-sans antialiased", fontSans.variable)}>{children}</body>
     </html>
   );

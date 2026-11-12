@@ -1,25 +1,27 @@
-import { Dispatch } from "react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
-export const FoodSelector = ({
-  food,
-  running,
-  setRunning,
-}: {
+export function FoodSelector({ food, running, empty, onToggle }: {
   food: string;
   running: boolean;
-  setRunning: Dispatch<boolean>;
-}) => (
-  <div className="h-screen w-screen flex flex-col justify-center items-center z-50">
-    <div className="text-5xl">{running || !food ? "吃什么?" : "吃这个!"}</div>
-    <div className="text-3xl text-yellow-300 font-bold p-2 m-2">{food}</div>
-    <Button
-      size="lg"
-      onClick={() => {
-        setRunning(!running);
-      }}
-    >
-      {running ? "结束" : "开始"}
-    </Button>
-  </div>
-);
+  empty: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <section className="relative flex w-full max-w-lg flex-col items-center gap-4 text-center" aria-label="吃饭抽签">
+      <h1 className="text-5xl">{running || !food ? "吃什么?" : "吃这个!"}</h1>
+      <p
+        className={cn("min-h-10 w-full text-3xl font-bold text-foreground", running ? "h-10 truncate" : "wrap-anywhere")}
+        role="status"
+        aria-live={running ? "off" : "polite"}
+        aria-atomic="true"
+      >
+        {food}
+      </p>
+      {empty && <p className="text-sm text-muted-foreground">菜单为空，请先在设置中添加菜品。</p>}
+      <Button size="lg" disabled={empty} onClick={onToggle}>
+        {running ? "结束" : "开始"}
+      </Button>
+    </section>
+  );
+}

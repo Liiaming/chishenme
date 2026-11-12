@@ -1,6 +1,6 @@
-const STORAGE_KEY = "foods";
+export const STORAGE_KEY = "foods";
 
-export const DEFAULT_FOODS = [
+export const DEFAULT_FOODS: readonly string[] = [
   "馄饨",
   "拉面",
   "烩面",
@@ -46,26 +46,17 @@ export const DEFAULT_FOODS = [
   "饺子",
 ];
 
-export const random = (): string => {
-  const foods = allFoods();
-  const i = Math.ceil(Math.random() * foods.length);
-  return foods[i - 1];
-};
-
-export const allFoods = () => {
-  if (typeof window === "undefined") {
-    return DEFAULT_FOODS;
+export function normalizeFoods(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every((food) => typeof food === "string")) {
+    throw new Error("菜单必须是菜名列表");
   }
+  return [...new Set(value.map((food) => food.trim()).filter(Boolean))];
+}
 
-  const foods = localStorage.getItem(STORAGE_KEY);
-  if (foods) {
-    return JSON.parse(foods) as string[];
-  }
+export function parseFoods(value: string | null): readonly string[] {
+  return value === null ? DEFAULT_FOODS : normalizeFoods(JSON.parse(value));
+}
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_FOODS));
-  return DEFAULT_FOODS;
-};
-
-export const saveFoods = (foods: string[]) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(foods));
-};
+export function random(foods: readonly string[]): string | undefined {
+  return foods[Math.floor(Math.random() * foods.length)];
+}
