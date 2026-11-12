@@ -46,5 +46,15 @@
     "@typescript-eslint/typescript-estree": {
       "minimatch": "^11.0.8"
     }
+  },
+  "description": "一个帮你决定吃什么的随机选餐小工具，支持自定义菜单和本地保存。",
+  "license": "WTFPL",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Liiaming/chishenme.git"
+  },
+  "homepage": "https://chishenme-one.vercel.app",
+  "bugs": {
+    "url": "https://github.com/Liiaming/chishenme/issues"
   }
 }
