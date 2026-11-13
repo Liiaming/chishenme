@@ -2,7 +2,7 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
-import { DEFAULT_FOODS } from "@/lib/foods";
+import { DEFAULT_FOODS, MAX_FOOD_NAME_LENGTH } from "@/lib/foods";
 import { updateFoods } from "@/lib/food-store";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -69,7 +69,7 @@ export const SettingsDialog = memo(function SettingsDialog({ foods, error, open,
       <DialogTrigger asChild>
         <Button variant="outline" aria-label="编辑菜单">编辑</Button>
       </DialogTrigger>
-      <DialogContent variant="menu" onOpenAutoFocus={(event) => {
+      <DialogContent onOpenAutoFocus={(event) => {
         event.preventDefault();
         openerRef.current = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
         titleRef.current?.focus();
@@ -113,6 +113,11 @@ export const SettingsDialog = memo(function SettingsDialog({ foods, error, open,
                 inputRef.current?.focus();
                 return;
               }
+              if (name.length > MAX_FOOD_NAME_LENGTH) {
+                setInputError(`菜名不能超过 ${MAX_FOOD_NAME_LENGTH} 个字符，请缩短后重试。`);
+                inputRef.current?.focus();
+                return;
+              }
               if (await save((current) => [...current, name])) {
                 setNewFood("");
                 setInputError("");
@@ -125,20 +130,21 @@ export const SettingsDialog = memo(function SettingsDialog({ foods, error, open,
                     <Input
                       ref={inputRef} id="new-food" name="food" autoComplete="off" placeholder="例如：酸菜鱼…"
                       value={newFood} readOnly={saving} aria-invalid={!!inputError}
-                      aria-describedby={inputError ? "food-input-error" : undefined}
+                      aria-describedby={inputError ? "food-name-hint food-input-error" : "food-name-hint"}
                       onChange={(event) => { setNewFood(event.target.value); setInputError(""); }}
                     />
                     <Button type="submit" disabled={saving} aria-label="添加菜品">
                       <Plus data-icon="inline-start" aria-hidden="true" />添加
                     </Button>
                   </div>
+                  <p id="food-name-hint" className="text-sm text-muted-foreground">菜名最多 {MAX_FOOD_NAME_LENGTH} 个字符。</p>
                   {inputError && <FieldError id="food-input-error">{inputError}</FieldError>}
                 </Field>
               </FieldGroup>
             </form>
-            <ScrollArea className="menu-list" aria-label="当前菜品">
+            <ScrollArea className="menu-list">
               {!foods.length && <p className="menu-empty">还没有菜品，在上面添加一道吧。</p>}
-              <ul ref={foodListRef} className="menu-foods">
+              <ul ref={foodListRef} className="menu-foods" aria-label="当前菜品">
                 {foods.map((food, index) => (
                   <li key={food}>
                     <span>{food}</span>

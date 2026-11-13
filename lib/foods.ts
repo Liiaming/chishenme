@@ -1,4 +1,5 @@
 export const STORAGE_KEY = "foods";
+export const MAX_FOOD_NAME_LENGTH = 200;
 
 export const DEFAULT_FOODS: readonly string[] = [
   "馄饨",

@@ -9,7 +9,7 @@ import { MenuPoster } from "@/components/menu-poster";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export default function Home() {
-  const { foods, error } = useSyncExternalStore(subscribeFoods, getFoodsSnapshot, getInitialFoodsSnapshot);
+  const { foods, error, loaded } = useSyncExternalStore(subscribeFoods, getFoodsSnapshot, getInitialFoodsSnapshot);
   const [menuOpen, setMenuOpen] = useState(false);
   const [selection, setSelection] = useState({ foods, food: "", running: false });
   if (selection.foods !== foods) {
@@ -53,17 +53,21 @@ export default function Home() {
   return (
     <main className="app-shell">
       <h1 className="sr-only">吃什么</h1>
+      <noscript>
+        <style>{".menu-loading { display: none; }"}</style>
+        <p className="m-auto p-8 text-center">请启用 JavaScript 后使用抽签和菜单编辑功能。</p>
+      </noscript>
       {error && (
         <Alert variant="destructive" className="storage-notice" aria-live="polite">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      <div className="drawing-stage">
+      {loaded ? <div className="drawing-stage">
         <FoodSelector food={food} running={running} empty={!foods.length} onToggle={toggleSelection} onAdd={() => changeMenu(true)} />
         <MenuPoster foods={foods}>
           <SettingsDialog foods={foods} error={error} open={menuOpen} onOpenChange={changeMenu} />
         </MenuPoster>
-      </div>
+      </div> : <p className="menu-loading m-auto p-8 text-center" role="status">正在读取菜单…</p>}
     </main>
   );
 }

@@ -12,9 +12,19 @@ npm start
 
 `out/` 是完整静态站点，`npm start` 仅用于本地预览。构建完成后不需要 Node.js 生产进程。
 
-## 静态托管
+## Vercel 部署
 
-在 Vercel 或其他静态托管平台中，使用以下配置：
+项目使用 Vercel 的 Next.js 框架预设，Node.js 版本设为 `24.x`。保留 `next.config.mjs` 中的 `output: "export"`。
+
+- 构建命令保持预设默认值，使用项目的 `npm run build`，不追加 `--webpack`。
+- 输出目录交给 Next.js 预设处理，不手动覆盖为 `out`。
+- 不需要环境变量，也不需要额外添加 `vercel.json`。
+
+如果项目后台已有自定义构建命令或输出目录，请检查并移除与上述设置冲突的覆盖；实际构建命令以部署日志为准。[Vercel 构建配置说明](https://vercel.com/docs/builds/configure-a-build)。
+
+## 其他静态托管
+
+在其他静态托管平台中，使用以下配置：
 
 | 设置 | 值 |
 | --- | --- |

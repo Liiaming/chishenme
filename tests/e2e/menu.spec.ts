@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { DEFAULT_FOODS } from "../../lib/foods";
+import { DEFAULT_FOODS, MAX_FOOD_NAME_LENGTH } from "../../lib/foods";
 
 async function seed(page: Page, value: string) {
   await page.goto("/");
@@ -71,6 +71,81 @@ test.beforeEach(async ({ page }) => {
   page.on("console", (message) => {
     if (message.type() === "error") throw new Error(message.text());
   });
+});
+
+for (const foods of [[], ["自定义菜品"]]) {
+  test(`initial load waits for storage without showing a default menu (${foods.length} dishes)`, async ({ page }) => {
+    await seed(page, JSON.stringify(foods));
+    let release!: () => void;
+    const scriptsReady = new Promise<void>((resolve) => { release = resolve; });
+    await page.route(/\.js(?:\?|$)/, async (route) => {
+      await scriptsReady;
+      await route.continue();
+    });
+    try {
+      await page.reload({ waitUntil: "commit" });
+      await expect(page.getByRole("status")).toHaveText("正在读取菜单…");
+      await expect(page.getByRole("button")).toHaveCount(0);
+      await expect(page.locator(".paper-foods > li")).toHaveCount(0);
+      expect(await savedFoods(page)).toEqual(foods);
+    } finally {
+      release();
+    }
+    await expect(page.getByText("正在读取菜单…")).toHaveCount(0);
+    await expect(page.locator(".menu-poster .paper-foods > li")).toHaveText(foods);
+    await expect(page.getByRole("button", { name: foods.length ? startName : "添加菜品", exact: true })).toBeVisible();
+    expect(await savedFoods(page)).toEqual(foods);
+  });
+}
+
+test.describe("without JavaScript", () => {
+  test.use({ javaScriptEnabled: false });
+  test("explains why the menu cannot be used instead of showing unusable buttons", async ({ page }) => {
+    await page.goto("/");
+    // Playwright's text query skips noscript subtrees even when JavaScript is disabled.
+    const notice = page.locator("noscript p");
+    await expect(notice).toHaveText("请启用 JavaScript 后使用抽签和菜单编辑功能。");
+    await expect(notice).toBeVisible();
+    await expect(page.getByText("正在读取菜单…")).toBeHidden();
+    await expect(page.getByRole("button")).toHaveCount(0);
+  });
+});
+
+test("the Apple icon loads, the list has a name, and the overlay keeps its animation in a light-only UI", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "no-preference" });
+  await page.goto("/");
+  await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute("href", "/meal-icon.png");
+  const icon = await page.request.get("/meal-icon.png");
+  expect(icon.ok()).toBe(true);
+  expect(icon.headers()["content-type"]).toContain("image/png");
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
+  await openMenu(page);
+  await expect(page.getByRole("list", { name: "当前菜品" })).toBeVisible();
+  await expect(page.locator('[data-slot="dialog-overlay"]')).toHaveCSS("animation-name", "enter");
+});
+
+test("new names reject over 200 characters without truncating existing saved names", async ({ page }) => {
+  const legacyName = "旧".repeat(MAX_FOOD_NAME_LENGTH + 1);
+  const boundaryName = "新".repeat(MAX_FOOD_NAME_LENGTH);
+  const tooLong = "长".repeat(MAX_FOOD_NAME_LENGTH + 1);
+  await seed(page, JSON.stringify([legacyName]));
+  await openMenu(page);
+  const input = page.getByRole("textbox", { name: "新增菜品" });
+  await addFood(page, tooLong);
+  await expect(page.getByText(`菜名不能超过 ${MAX_FOOD_NAME_LENGTH} 个字符，请缩短后重试。`)).toBeVisible();
+  await expect(input).toHaveValue(tooLong);
+  await expect(input).toBeFocused();
+  await expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(await savedFoods(page)).toEqual([legacyName]);
+  await addFood(page, ` ${boundaryName} `);
+  await expect.poll(() => savedFoods(page)).toEqual([legacyName, boundaryName]);
+  await expect(input).toHaveValue("");
+  await expect(input).toHaveAttribute("aria-invalid", "false");
+  await page.reload();
+  await openMenu(page);
+  await expect(page.getByRole("list", { name: "当前菜品" }).getByRole("listitem")).toHaveCount(2);
+  await page.getByRole("button", { name: `删除${legacyName}`, exact: true }).click();
+  await expect.poll(() => savedFoods(page)).toEqual([boundaryName]);
 });
 
 test("default menu draws a visible result, remains clickable and does not poll storage", async ({ page }) => {
@@ -405,30 +480,27 @@ for (const fallback of ["missing", "corrupt"]) {
   });
 }
 
-for (const dark of [false, true]) {
-  test(`${dark ? "dark" : "light"} primary hover, validation and storage errors have readable contrast`, async ({ page }) => {
-    await seed(page, '["饺子"]');
-    await page.evaluate((dark) => document.documentElement.classList.toggle("dark", dark), dark);
-    const primary = page.getByRole("button", { name: startName, exact: true });
-    await primary.hover();
-    await primary.evaluate(async (node) => {
-      await Promise.all(node.getAnimations().map((animation) => animation.finished));
-    });
-    expect(await contrastRatio(primary)).toBeGreaterThanOrEqual(4.5);
-    await openMenu(page);
-    await addFood(page, "   ");
-    const inputError = page.locator('[data-slot="field-error"]');
-    await expect(inputError).toBeVisible();
-    expect(await contrastRatio(inputError)).toBeGreaterThanOrEqual(4.5);
-    await page.evaluate(() => {
-      Storage.prototype.setItem = () => { throw new DOMException("Full", "QuotaExceededError"); };
-    });
-    await addFood(page, "拉面");
-    const saveError = page.getByRole("dialog").locator('[data-slot="alert-description"]');
-    await expect(saveError).toBeVisible();
-    expect(await contrastRatio(saveError)).toBeGreaterThanOrEqual(4.5);
+test("primary hover, validation and storage errors have readable contrast", async ({ page }) => {
+  await seed(page, '["饺子"]');
+  const primary = page.getByRole("button", { name: startName, exact: true });
+  await primary.hover();
+  await primary.evaluate(async (node) => {
+    await Promise.all(node.getAnimations().map((animation) => animation.finished));
   });
-}
+  expect(await contrastRatio(primary)).toBeGreaterThanOrEqual(4.5);
+  await openMenu(page);
+  await addFood(page, "   ");
+  const inputError = page.locator('[data-slot="field-error"]');
+  await expect(inputError).toBeVisible();
+  expect(await contrastRatio(inputError)).toBeGreaterThanOrEqual(4.5);
+  await page.evaluate(() => {
+    Storage.prototype.setItem = () => { throw new DOMException("Full", "QuotaExceededError"); };
+  });
+  await addFood(page, "拉面");
+  const saveError = page.getByRole("dialog").locator('[data-slot="alert-description"]');
+  await expect(saveError).toBeVisible();
+  expect(await contrastRatio(saveError)).toBeGreaterThanOrEqual(4.5);
+});
 
 test("storage errors do not overlap the selector on a short landscape screen", async ({ page }) => {
   await page.setViewportSize({ width: 568, height: 320 });

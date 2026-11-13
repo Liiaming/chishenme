@@ -2,17 +2,18 @@
 
 import { DEFAULT_FOODS, normalizeFoods, parseFoods, STORAGE_KEY } from "./foods";
 
-type Snapshot = { foods: readonly string[]; error: string };
-const initialSnapshot: Snapshot = { foods: DEFAULT_FOODS, error: "" };
+type Snapshot = { foods: readonly string[]; error: string; loaded: boolean };
+const initialSnapshot: Snapshot = { foods: DEFAULT_FOODS, error: "", loaded: false };
 let snapshot = initialSnapshot;
 const listeners = new Set<() => void>();
 
 function readFoods(): Snapshot {
   try {
-    return { foods: parseFoods(localStorage.getItem(STORAGE_KEY)), error: "" };
+    return { foods: parseFoods(localStorage.getItem(STORAGE_KEY)), error: "", loaded: true };
   } catch {
     return {
       foods: DEFAULT_FOODS,
+      loaded: true,
       error: "无法读取本地菜单，已使用默认菜单。请检查浏览器存储权限，或重置损坏的菜单。",
     };
   }
@@ -53,7 +54,7 @@ export async function updateFoods(
         ? update(parseFoods(localStorage.getItem(STORAGE_KEY)))
         : update);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(foods));
-      publish({ foods, error: "" });
+      publish({ foods, error: "", loaded: true });
     });
     return true;
   } catch {

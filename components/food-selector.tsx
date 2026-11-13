@@ -10,7 +10,7 @@ export function FoodSelector({ food, running, empty, onToggle, onAdd }: {
   return (
     <section className="food-selector" aria-label="吃饭抽签">
       <p className="selection-label">{running ? "正在选…" : food ? "今天就吃" : "到饭点了。"}</p>
-      <div className="selection-stage" data-settled={!!food && !running}>
+      <div className="selection-stage">
         {!food && (
           <p className="selection-question">
             {empty ? <>菜单<br />还是空的</> : <>今天<br />吃什么。</>}

@@ -4,6 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "吃什么？",
+  icons: { apple: "/meal-icon.png" },
   description: "不知道吃什么？从自己的菜单里随机选一道。菜单只保存在当前浏览器。",
 };
 

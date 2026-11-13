@@ -43,23 +43,16 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
-  variant = "default",
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
-  variant?: "default" | "menu"
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
-        data-variant={variant}
-        className={cn(
-          "fixed z-50 grid w-full gap-4 border bg-card p-6 shadow-lg outline-none",
-          variant === "menu" ? "menu-panel" : "top-[50%] left-[50%] max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] rounded-lg duration-200 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
-          className
-        )}
+        className={cn("menu-panel fixed z-50 outline-none", className)}
         {...props}
       >
         {children}
